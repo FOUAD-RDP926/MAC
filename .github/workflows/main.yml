@@ -1,38 +1,57 @@
-name: MacOS Web Fullscreen
-on: 
+name: macOS-WebVNC-Cloudflare
+
+on:
   workflow_dispatch:
 
 jobs:
-  macos:
-    runs-on: ubuntu-latest
+  macos-web-access:
+    runs-on: macos-latest
+    timeout-minutes: 3600
+
     steps:
-      - name: Maximize Disk Space
+      - name: Enable macOS Screen Sharing
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+          # ضبط كلمة مرور للـ VNC (ضروري للاتصال الخارجي)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+          -activate -configure -access -on \
+          -clientopts -setvncpw -vncpw "vncpassword" \
+          -restart -agent -privs -all
 
-      - name: Start macOS Container (QEMU)
+      - name: Install noVNC and Cloudflared
         run: |
-          # تشغيل نظام ماك (إصدار Ventura) بواجهة رسومية
-          docker run -d --name macos -p 6080:8080 -e RAM=6G -e CORES=4 -e VERSION=13 sickcodes/docker-osx:auto
+          # تثبيت الأدوات اللازمة
+          brew install novnc cloudflared
+          
+      - name: Start noVNC Proxy
+        run: |
+          # تشغيل websockify لتحويل VNC إلى Web Port (6080)
+          # الماك يعمل افتراضياً على بورت 5900 للـ VNC
+          nohup /usr/local/bin/websockify --web /usr/local/share/novnc 6080 localhost:5900 &
+          sleep 5
 
-      - name: Setup Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel
+        id: cloudflare
         run: |
-          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared.deb
-          
-          echo "---------------------------------------------------"
-          echo "جاري تشغيل نظام macOS... قد يستغرق الدخول الأول 10 دقائق"
-          nohup cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
-          sleep 30
-          
-          TUNNEL_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | head -n 1)
-          echo "رابط الدخول لنظام الماك (Fullscreen Mobile):"
-          echo "$TUNNEL_URL"
-          echo "---------------------------------------------------"
-          echo "ملاحظة: اضغط Add to Home Screen على موبايلك لتجربة كاملة"
-          echo "---------------------------------------------------"
+          # تشغيل نفق Cloudflare وتوجيهه لبورت noVNC
+          nohup cloudflared tunnel --url http://localhost:6080 > cloudflare.log 2>&1 &
+          sleep 10
+          # استخراج الرابط من ملف السجل
+          CF_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' cloudflare.log | head -n 1)
+          echo "WEB_URL=$CF_URL" >> $GITHUB_ENV
+
+      - name: Display Connection Info
+        run: |
+          echo "=========================================="
+          echo "Access your macOS via Browser here:"
+          echo "${{ env.WEB_URL }}/vnc.html?autoconnect=true"
+          echo ""
+          echo "VNC Password: vncpassword"
+          echo "=========================================="
 
       - name: Keep Alive
-        run: sleep 21600
-        
+        run: |
+          while true; do
+            echo "[$(date)] Runner is running... Check the link above."
+            sleep 300
+          done
