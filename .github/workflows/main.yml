@@ -1,0 +1,38 @@
+name: MacOS Web Fullscreen
+on: 
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+
+      - name: Start macOS Container (QEMU)
+        run: |
+          # تشغيل نظام ماك (إصدار Ventura) بواجهة رسومية
+          docker run -d --name macos -p 6080:8080 -e RAM=6G -e CORES=4 -e VERSION=13 sickcodes/docker-osx:auto
+
+      - name: Setup Cloudflare Tunnel
+        run: |
+          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          
+          echo "---------------------------------------------------"
+          echo "جاري تشغيل نظام macOS... قد يستغرق الدخول الأول 10 دقائق"
+          nohup cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+          sleep 30
+          
+          TUNNEL_URL=$(grep -o 'https://[-a-z0-9.]*trycloudflare.com' tunnel.log | head -n 1)
+          echo "رابط الدخول لنظام الماك (Fullscreen Mobile):"
+          echo "$TUNNEL_URL"
+          echo "---------------------------------------------------"
+          echo "ملاحظة: اضغط Add to Home Screen على موبايلك لتجربة كاملة"
+          echo "---------------------------------------------------"
+
+      - name: Keep Alive
+        run: sleep 21600
+        
