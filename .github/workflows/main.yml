@@ -1,4 +1,4 @@
-name: macOS-WebVNC-Fix
+name: macOS-VNC-AuthFix
 
 on:
   workflow_dispatch:
@@ -9,55 +9,57 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Create Admin & Set Auto-Login
+      - name: Create User apple (Admin123)
         run: |
-          # إنشاء المستخدم apple وتعيينه كمسؤول
+          # 1. إنشاء المستخدم وتعيينه مسؤول
           sudo sysadminctl -addUser "apple" -fullName "Apple User" -password "Admin123" -admin
           
-          # تفعيل Remote Management بكل الصلاحيات
+      - name: Force VNC Permissions (The Fix)
+        run: |
+          # إيقاف الخدمة أولاً لضمان تطبيق الإعدادات
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop
+
+          # إجبار النظام على قبول VNC Connections
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
+          
+          # إعداد الصلاحيات للمستخدم apple + وضع كلمة مرور VNC
+          # الأمر الحاسم هنا هو setvnclegacy -vnclegacy yes
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
           -activate -configure -access -on \
-          -users "apple" -privs -all -restart -agent -mask 31
-          
-          # ضبط كلمة مرور VNC لجميع الاتصالات
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-          -configure -clientopts -setvncpw -vncpw "vncpassword"
+          -users "apple" -privs -all \
+          -clientopts -setvncpw -vncpw "vncpassword" -setvnclegacy -vnclegacy yes \
+          -restart -agent -mask 31
 
-      - name: Install Dependencies
+      - name: Install Tools
         run: |
           brew install cloudflared
           git clone https://github.com/novnc/noVNC.git $HOME/noVNC
           git clone https://github.com/novnc/websockify $HOME/noVNC/utils/websockify
           pip3 install numpy --break-system-packages
 
-      - name: Launch Services with Fix
+      - name: Start Services
         run: |
-          # تشغيل websockify مع توجيه مباشر للبورت المحلي
-          # استخدام 127.0.0.1 بدلاً من localhost لتجنب مشاكل الـ DNS الداخلي
+          # تشغيل noVNC على 127.0.0.1 لتجنب الرفض الخارجي
           nohup $HOME/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen 6080 &
+          sleep 5
           
-          # انتظار 10 ثواني للتأكد من استقرار الجسر
-          sleep 10
-          
-          # تشغيل Cloudflare
+          # تشغيل Cloudflare Tunnel
           nohup cloudflared tunnel --url http://127.0.0.1:6080 > cloudflare.log 2>&1 &
-          
-          # انتظار كافي لتوليد الرابط
-          sleep 20
+          sleep 15
 
-      - name: Get Connection Link
+      - name: Get Info
         run: |
           CF_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' cloudflare.log | head -n 1)
           echo "=========================================="
-          echo "Link: $CF_URL/vnc.html?autoconnect=true"
+          echo "LINK: $CF_URL/vnc.html?autoconnect=true"
           echo "VNC Pass: vncpassword"
-          echo "macOS User: apple | Pass: Admin123"
+          echo "Mac User: apple  |  Pass: Admin123"
           echo "=========================================="
           echo "URL=$CF_URL" >> $GITHUB_ENV
 
-      - name: Keep Active
+      - name: Keep Alive
         run: |
           while true; do
-            echo "Keep alive: ${{ env.URL }}"
+            echo "Running: ${{ env.URL }}"
             sleep 300
           done
